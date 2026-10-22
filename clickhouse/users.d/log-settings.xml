@@ -1,0 +1,12 @@
+<!-- Applied to every profile through the default profile (design doc Section 5.6). -->
+<clickhouse>
+  <profiles>
+    <default>
+      <log_queries>1</log_queries>
+      <log_queries_min_type>QUERY_START</log_queries_min_type>   <!-- capture queries that never finish -->
+      <log_queries_min_query_duration_ms>0</log_queries_min_query_duration_ms>
+      <log_query_threads>0</log_query_threads>
+      <log_profile_events>1</log_profile_events>
+    </default>
+  </profiles>
+</clickhouse>

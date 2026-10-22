@@ -1,0 +1,42 @@
+---
+# Encrypted-disk key rotation (design doc Section 4.6). Yearly, or immediately on suspected exposure.
+#   1. Add disk_key_<N> to Vault (secret/clickhouse/<env>); keep every older key.
+#   2. Run per replica group, passing the FULL key list (the highest id becomes current_key_id):
+#        ansible-playbook -i inventories/prod playbooks/rotate_disk_key.yml \
+#          -e '{"ch_disk_key_ids": [1, 2, 3]}' -e target=replica_r2
+#      then the same with target=replica_r1.
+#   3. Set ch_disk_key_ids in inventories/<env>/group_vars/all.yml in the same PR.
+# New parts are written with the new key; existing parts stay readable with old keys. To re-encrypt old
+# data, run OPTIMIZE ... FINAL per partition in a maintenance window (or let TTL moves rewrite it).
+
+- name: Rotate encrypted-disk key
+  hosts: "{{ target | mandatory }}:&clickhouse"
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars:
+    ch_allow_restart: true
+  pre_tasks:
+    - name: Key list passed explicitly
+      ansible.builtin.assert:
+        that: ch_disk_key_ids | length >= 2
+        fail_msg: "pass the full key list, e.g. -e '{\"ch_disk_key_ids\": [1, 2, 3]}'"
+  roles:
+    - vault_agent
+    - clickhouse_server
+  post_tasks:
+    - name: Restart to load the new key environment
+      ansible.builtin.systemd:
+        name: clickhouse-server
+        state: restarted
+
+    - name: Encrypted disks are up
+      ansible.builtin.command: >-
+        clickhouse-client --query
+        "SELECT count() FROM system.disks WHERE type = 'Encrypted'"
+      register: disks
+      retries: 30
+      delay: 10
+      until: disks.rc == 0
+      changed_when: false
+      failed_when: disks.rc != 0 or disks.stdout | int == 0

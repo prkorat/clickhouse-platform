@@ -1,0 +1,47 @@
+# chproxy configuration (STARTING TEMPLATE: rendered into a ConfigMap by kustomization.yaml).
+# Per-user concurrency and queue limits sit in front of ClickHouse's own profiles and quotas.
+# chproxy users map to pooled ClickHouse users svc_chproxy_bi / svc_chproxy_api, which still need to be
+# defined in clickhouse/access/env/<env>/ with the alternating-password rotation (design doc Section 4.5).
+server:
+  https:
+    listen_addr: ":8443"
+    cert_file: /etc/chproxy/tls/tls.crt
+    key_file: /etc/chproxy/tls/tls.key
+  metrics:
+    allowed_networks: ["10.40.40.0/24"]
+
+hack_me_please: false
+
+users:
+  - name: "bi"
+    to_cluster: "prod"
+    to_user: "svc_chproxy_bi"
+    max_concurrent_queries: 30
+    max_execution_time: 5m
+    max_queue_size: 100
+    max_queue_time: 30s
+    allowed_networks: ["10.30.0.0/16"]   # BI tool VPC via PrivateLink
+  - name: "api"
+    to_cluster: "prod"
+    to_user: "svc_chproxy_api"
+    max_concurrent_queries: 50
+    max_execution_time: 30s
+    allowed_networks: ["10.20.0.0/16"]
+
+clusters:
+  - name: "prod"
+    scheme: "https"
+    nodes:
+      # Rendered from the inventory: one entry per data node.
+      - "ch-s01-r1.ch.prod.internal:8443"
+      - "ch-s01-r2.ch.prod.internal:8443"
+    heartbeat:
+      interval: 5s
+      timeout: 3s
+      request: "/ping"
+      response: "Ok.\n"
+    users:
+      - name: "svc_chproxy_bi"
+        password_env: "CHPROXY_BI_PASSWORD"    # from Secrets Manager via External Secrets; rotated every 90 days
+      - name: "svc_chproxy_api"
+        password_env: "CHPROXY_API_PASSWORD"

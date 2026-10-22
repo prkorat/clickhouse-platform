@@ -1,0 +1,11 @@
+# gitleaks config: default rules plus allowlist for the LOCAL-ONLY Docker credentials and placeholder keys.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Local dev cluster credentials and documented placeholders"
+paths = [
+  '''^local/''',
+  '''clickhouse/access/env/local/''',
+  '''\.tfvars\.example$''',
+]

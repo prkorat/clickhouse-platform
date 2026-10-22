@@ -1,0 +1,52 @@
+---
+# Vault Agent: short-lived TLS certificates from Vault PKI and secrets into a tmpfs env file
+# (design doc Section 4.5). Authenticates with the EC2 instance role (AWS IAM auth), no static token.
+
+- name: Install Vault
+  ansible.builtin.dnf:
+    name: "vault-{{ vault_version }}"
+    state: present
+
+- name: Agent config
+  ansible.builtin.template:
+    src: agent.hcl.j2
+    dest: /etc/vault-agent/agent.hcl
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart Vault Agent
+
+- name: Mount tmpfs for rendered secrets (never on disk)
+  ansible.posix.mount:
+    path: /run/clickhouse
+    src: tmpfs
+    fstype: tmpfs
+    opts: "size=1m,mode=0750,uid=clickhouse,gid=clickhouse"
+    state: mounted
+
+- name: Vault Agent service (starts before ClickHouse / Keeper)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/vault-agent.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Vault Agent (ClickHouse certificates and secrets)
+      Before=clickhouse-server.service clickhouse-keeper.service
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      ExecStart=/usr/bin/vault agent -config=/etc/vault-agent/agent.hcl
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart Vault Agent
+
+- name: Vault Agent enabled
+  ansible.builtin.systemd:
+    name: vault-agent
+    enabled: true
+    state: started
+    daemon_reload: true

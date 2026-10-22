@@ -1,0 +1,19 @@
+<!--
+  LOCAL ONLY. Same access model as production (clickhouse/config.d/20-access.xml) minus LDAP:
+  SQL users/roles in replicated storage and the same secure access_control_improvements, so
+  grants and row policies behave locally exactly as they do in prod.
+-->
+<clickhouse>
+  <user_directories replace="replace">
+    <users_xml><path>users.xml</path></users_xml>
+    <replicated><zookeeper_path>/clickhouse/access/</zookeeper_path></replicated>
+  </user_directories>
+
+  <access_control_improvements>
+    <users_without_row_policies_can_read_rows>false</users_without_row_policies_can_read_rows>
+    <select_from_system_db_requires_grant>true</select_from_system_db_requires_grant>
+    <select_from_information_schema_requires_grant>true</select_from_information_schema_requires_grant>
+    <settings_constraints_replace_previous>true</settings_constraints_replace_previous>
+    <on_cluster_queries_require_cluster_grant>true</on_cluster_queries_require_cluster_grant>
+  </access_control_improvements>
+</clickhouse>

@@ -1,0 +1,75 @@
+# Deploy on merge to main: staging first, then production behind environment protection
+# (required reviewers = two-person rule). Design doc Sections 6.2-6.3.
+#
+# Order per environment: Terraform -> Ansible (no restarts) -> access model -> migrations.
+# Restarts and version upgrades are NOT done here: run the rolling-upgrade workflow_dispatch below.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      rolling_target:
+        description: "Rolling restart/upgrade target (replica_r2, replica_r1, keeper). Empty = normal deploy."
+        required: false
+        default: ""
+      environment:
+        description: "staging or production"
+        required: false
+        default: staging
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false   # never cancel a deploy half way
+
+jobs:
+  staging:
+    if: github.event_name == 'push' || inputs.rolling_target == ''
+    uses: ./.github/workflows/_apply.yml
+    with:
+      environment: staging
+      tf_env: staging
+      ansible_inventory: staging
+      aws_role: arn:aws:iam::444455556666:role/gha-clickhouse-apply
+      ch_host: chproxy.ch.staging.internal
+    secrets: inherit
+
+  production:
+    needs: staging
+    uses: ./.github/workflows/_apply.yml
+    with:
+      environment: production        # protected: required reviewers, main branch only
+      tf_env: prod-use1
+      ansible_inventory: prod
+      aws_role: arn:aws:iam::111122223333:role/gha-clickhouse-apply
+      ch_host: chproxy.ch.prod.internal
+    secrets: inherit
+
+  dr:
+    needs: production
+    uses: ./.github/workflows/_apply.yml
+    with:
+      environment: production
+      tf_env: dr-usw2
+      ansible_inventory: dr
+      aws_role: arn:aws:iam::111122223333:role/gha-clickhouse-apply
+      ch_host: chproxy.ch.dr.internal
+    secrets: inherit
+
+  rolling:
+    if: github.event_name == 'workflow_dispatch' && inputs.rolling_target != ''
+    runs-on: [self-hosted, clickhouse-ops]   # runner inside the VPC with SSM access
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: ansible-galaxy collection install -r ansible/requirements.yml
+      - name: Rolling restart / upgrade (one node at a time, stops on first failure)
+        working-directory: ansible
+        run: >
+          ansible-playbook -i inventories/${{ inputs.environment == 'production' && 'prod' || 'staging' }}
+          playbooks/rolling_upgrade.yml -e target=${{ inputs.rolling_target }}

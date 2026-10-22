@@ -1,0 +1,6 @@
+---
+vault_version: "1.18.3"
+vault_aws_auth_role: "clickhouse-{{ ch_env }}"
+vault_secret_path: "secret/data/clickhouse/{{ ch_env }}"
+vault_cert_ttl: 720h            # 30 days; renewed by the agent at ~2/3 of lifetime
+vault_pki_client_role: pki_int_clickhouse/issue/ch-client

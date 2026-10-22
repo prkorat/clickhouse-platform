@@ -1,0 +1,9 @@
+# Two-person rule: every path needs an approving review from its owners (branch protection on main).
+*                               @example-org/data-platform
+/clickhouse/access/             @example-org/data-platform @example-org/security
+/clickhouse/config.d/           @example-org/data-platform @example-org/security
+/policies/                      @example-org/security
+/terraform/                     @example-org/data-platform @example-org/cloud-infra
+/terraform/envs/backup-account/ @example-org/security
+/.github/                       @example-org/data-platform @example-org/security
+/clickhouse/migrations/         @example-org/data-platform @example-org/data-engineering

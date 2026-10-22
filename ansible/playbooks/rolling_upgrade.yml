@@ -1,0 +1,90 @@
+---
+# Rolling upgrade / restart (runbooks/rolling-upgrade.md, design doc Section 6.4).
+#   1. bump ch_version in inventories/<env>/group_vars/all.yml (PR, staging soak 7 days)
+#   2. ansible-playbook -i inventories/prod playbooks/rolling_upgrade.yml -e target=replica_r2
+#   3. after 24 h healthy: same with -e target=replica_r1
+#   4. Keeper last: -e target=keeper (followers first, leader last)
+# One node at a time; stops on the first failure.
+
+- name: Rolling upgrade of ClickHouse data nodes
+  hosts: "{{ target | mandatory }}:&clickhouse"
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars:
+    ch_allow_restart: true
+    admin_client: "clickhouse-client"   # /etc/clickhouse-client/config.xml: svc_node_ops over mTLS
+  # chproxy heartbeats every node (/ping every 5 s) and stops routing to one that fails, retrying the
+  # query on the shard's other replica; the wait below lets in-flight queries finish first.
+  pre_tasks:
+    - name: Stop merges and wait for running queries (max 10 min)
+      ansible.builtin.shell: |
+        {{ admin_client }} --query "SYSTEM STOP MERGES"
+        for i in $(seq 1 60); do
+          n=$({{ admin_client }} --query "SELECT count() FROM system.processes WHERE is_initial_query")
+          [ "$n" -le 1 ] && exit 0
+          sleep 10
+        done
+        echo "queries still running after 10 min" >&2
+      changed_when: true
+
+  roles:
+    - clickhouse_server
+
+  post_tasks:
+    - name: Restart (applies the new package and any storage/listener changes)
+      ansible.builtin.systemd:
+        name: clickhouse-server
+        state: restarted
+
+    - name: Wait for the server
+      ansible.builtin.command: "{{ admin_client }} --query 'SELECT version()'"
+      register: ver
+      retries: 30
+      delay: 10
+      until: ver.rc == 0
+      changed_when: false
+
+    - name: Version is the pinned one
+      ansible.builtin.assert:
+        that: ver.stdout == ch_version
+        fail_msg: "expected {{ ch_version }}, got {{ ver.stdout }}"
+
+    - name: Replicas writable and caught up (< 60 s)
+      ansible.builtin.command: >-
+        {{ admin_client }} --query
+        "SELECT countIf(is_readonly) + countIf(absolute_delay >= 60) FROM system.replicas"
+      register: lag
+      retries: 60
+      delay: 30
+      until: lag.stdout | int == 0
+      changed_when: false
+
+- name: Rolling restart of Keeper (followers first, leader last)
+  hosts: "{{ target | mandatory }}:&keeper"
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  order: sorted
+  vars:
+    ch_allow_restart: true
+  roles:
+    - clickhouse_keeper
+  post_tasks:
+    - name: Restart Keeper
+      ansible.builtin.systemd:
+        name: clickhouse-keeper
+        state: restarted
+
+    - name: Quorum restored (leader reports 2 synced followers)
+      ansible.builtin.shell: |
+        for k in {{ groups['keeper'] | join(' ') }}; do
+          echo mntr | openssl s_client -quiet -connect $k.{{ ch_dns_zone }}:9281 \
+            -cert /etc/clickhouse-keeper/tls/keeper.crt -key /etc/clickhouse-keeper/tls/keeper.key \
+            -CAfile /etc/clickhouse-keeper/tls/ca-bundle.crt 2>/dev/null | grep zk_synced_followers
+        done
+      register: mntr
+      retries: 30
+      delay: 10
+      until: "'zk_synced_followers\t2' in mntr.stdout"
+      changed_when: false

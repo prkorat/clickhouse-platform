@@ -1,0 +1,29 @@
+# Copy to terraform.tfvars (git-ignored) or supply through the pipeline. Placeholder ids only.
+ami_id   = "ami-0123456789abcdef0"
+vpc_id   = "vpc-0123456789abcdef0"
+vpc_cidr = "10.40.0.0/16"
+
+data_subnet_ids_by_az = {
+  "us-west-2a" = "subnet-0aaaaaaaaaaaaaaa1"
+  "us-west-2b" = "subnet-0aaaaaaaaaaaaaaa2"
+  "us-west-2c" = "subnet-0aaaaaaaaaaaaaaa3"
+}
+keeper_subnet_ids_by_az = {
+  "us-west-2a" = "subnet-0bbbbbbbbbbbbbbb1"
+  "us-west-2b" = "subnet-0bbbbbbbbbbbbbbb2"
+  "us-west-2c" = "subnet-0bbbbbbbbbbbbbbb3"
+}
+
+client_prefix_list_id = "pl-0123456789abcdef0"
+s3_prefix_list_id     = "pl-63a5400a"
+dns_zone_id           = "Z0123456789ABCDEFGHIJ"
+dns_zone_name         = "ch.dr.internal"
+
+key_admin_role_arns          = ["arn:aws:iam::111122223333:role/kms-admin"]
+autoscaling_service_role_arn = "arn:aws:iam::111122223333:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+backup_role_arn              = "arn:aws:iam::111122223333:role/ch-backup"
+backup_bucket_arn            = "arn:aws:s3:::ch-backup-prod-use1"
+bootstrap_ebs_kms_key_arn    = "arn:aws:kms:us-west-2:111122223333:key/00000000-0000-0000-0000-000000000000"
+node_kms_key_arns            = ["arn:aws:kms:us-west-2:111122223333:key/00000000-0000-0000-0000-000000000000"]
+clickhouse_secret_arns       = ["arn:aws:secretsmanager:us-west-2:111122223333:secret:ch/dr/*"]
+keeper_secret_arns           = ["arn:aws:secretsmanager:us-west-2:111122223333:secret:ch/dr/keeper/*"]

@@ -1,0 +1,3 @@
+---
+keeper_data_device: /dev/nvme1n1
+ch_allow_restart: false

@@ -1,0 +1,2 @@
+# Managed by Ansible. NVMe instance store and Nitro EBS both appear as NVMe: no I/O scheduler.
+ACTION=="add|change", KERNEL=="nvme[0-9]*n[0-9]*", ATTR{queue/scheduler}="none", ATTR{queue/nr_requests}="1023"

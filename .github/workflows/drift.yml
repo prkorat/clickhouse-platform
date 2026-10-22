@@ -1,0 +1,71 @@
+# Nightly drift detection (design doc Section 6.2): Terraform, Ansible and RBAC compared with Git.
+# Opens (or updates) one issue per environment when drift is found; never pages.
+name: drift
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+jobs:
+  drift:
+    runs-on: [self-hosted, clickhouse-ops]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { env: prod, tf_env: prod-use1, ch_host: chproxy.ch.prod.internal, role: "arn:aws:iam::111122223333:role/gha-clickhouse-plan" }
+          - { env: dr, tf_env: dr-usw2, ch_host: chproxy.ch.dr.internal, role: "arn:aws:iam::111122223333:role/gha-clickhouse-plan" }
+          - { env: staging, tf_env: staging, ch_host: chproxy.ch.staging.internal, role: "arn:aws:iam::444455556666:role/gha-clickhouse-plan" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: { role-to-assume: "${{ matrix.role }}", aws-region: us-east-1 }
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8", terraform_wrapper: false }
+
+      - name: Terraform drift
+        id: tf
+        run: |
+          terraform -chdir=terraform/envs/${{ matrix.tf_env }} init -input=false
+          set +e
+          terraform -chdir=terraform/envs/${{ matrix.tf_env }} plan -detailed-exitcode -lock=false -no-color > tf.txt
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Ansible drift
+        id: ansible
+        working-directory: ansible
+        run: |
+          ansible-galaxy collection install -r requirements.yml
+          set +e
+          ansible-playbook -i inventories/${{ matrix.env }} playbooks/site.yml --check --diff > ../ansible.txt
+          grep -qE 'changed=[1-9]' ../ansible.txt && echo "drift=1" >> "$GITHUB_OUTPUT" || echo "drift=0" >> "$GITHUB_OUTPUT"
+
+      - name: RBAC drift
+        id: rbac
+        env:
+          CH_CLIENT: clickhouse-client --host ${{ matrix.ch_host }} --port 9440 --secure --user svc_ci_deployer
+          ENV: ${{ matrix.env }}
+          SNAPSHOT_FILE: show_access.sql
+        run: |
+          set +e
+          scripts/rbac-drift.sh > rbac.txt
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update drift issue
+        if: steps.tf.outputs.code == '2' || steps.ansible.outputs.drift == '1' || steps.rbac.outputs.code == '2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Drift detected: ${{ matrix.env }}"
+          { echo "Nightly drift run ${{ github.run_id }}"; echo;
+            echo "## Terraform"; echo '```'; tail -50 tf.txt; echo '```';
+            echo "## Ansible"; echo '```'; grep -E 'changed:|PLAY RECAP' -A1 ansible.txt | tail -50; echo '```';
+            echo "## RBAC"; echo '```'; cat rbac.txt; echo '```'; } > body.md
+          num=$(gh issue list --label drift --search "$title in:title" --json number -q '.[0].number')
+          if [ -n "$num" ]; then gh issue comment "$num" -F body.md; else gh issue create -t "$title" -F body.md -l drift; fi

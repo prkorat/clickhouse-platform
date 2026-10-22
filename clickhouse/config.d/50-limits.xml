@@ -1,0 +1,14 @@
+<!-- Server-wide ceilings (design doc Section 4.8). Protect the process even if a profile is misassigned. -->
+<clickhouse>
+  <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+  <max_concurrent_queries>400</max_concurrent_queries>
+  <max_concurrent_select_queries>300</max_concurrent_select_queries>
+  <max_concurrent_insert_queries>100</max_concurrent_insert_queries>
+
+  <!-- Ransomware / fat-finger guard (Section 4.10): refuse to drop more than 50 GB at once. -->
+  <max_table_size_to_drop>50000000000</max_table_size_to_drop>
+  <max_partition_size_to_drop>50000000000</max_partition_size_to_drop>
+
+  <!-- Workload scheduler definitions (CREATE RESOURCE / WORKLOAD) replicated through Keeper to every node. -->
+  <workload_zookeeper_path>/clickhouse/workload/definitions.sql</workload_zookeeper_path>
+</clickhouse>

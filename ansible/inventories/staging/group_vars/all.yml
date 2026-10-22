@@ -1,0 +1,15 @@
+# Values shared by every host in staging. Secrets are NOT here: Vault Agent renders them at boot.
+ch_cluster: staging
+ch_env: staging
+ch_dns_zone: ch.staging.internal
+aws_region: us-east-1
+ch_version: "25.8.10.7"          # pin exact LTS patch; bump via PR + rolling_upgrade.yml
+ch_shard_count: 2
+ch_replicas_per_shard: 2
+ch_cold_bucket: ch-staging-use1-cold
+ch_s3_cold_kms_key_arn: "arn:aws:kms:us-east-1:111122223333:key/REPLACE-s3-cold"
+vault_addr: https://vault.corp.example.com:8200
+vault_pki_role: pki_int_clickhouse/issue/ch-server
+ansible_connection: community.aws.aws_ssm
+ansible_aws_ssm_region: us-east-1
+ansible_aws_ssm_bucket_name: ssm-ansible-transfer-staging

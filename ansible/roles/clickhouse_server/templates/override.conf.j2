@@ -1,0 +1,26 @@
+# Managed by Ansible (roles/clickhouse_server). Design doc Section 5.2.
+# systemd does not allow trailing comments, so every comment is on its own line.
+[Service]
+LimitNOFILE=1048576
+LimitNPROC=131072
+# Core dumps would contain query data (PII)
+LimitCORE=0
+LimitMEMLOCK=infinity
+TasksMax=infinity
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/clickhouse /var/log/clickhouse-server /data/nvme /data/warm
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_IPC_LOCK CAP_SYS_NICE CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_IPC_LOCK CAP_SYS_NICE CAP_NET_BIND_SERVICE
+# tmpfs, 0400, rendered by Vault Agent at boot: CH_CLUSTER_SECRET, CH_INTERSERVER_PASSWORD,
+# CH_KEEPER_IDENTITY, CH_DISK_KEY_<n>, CH_REGULATED_KEY_1
+EnvironmentFile=/run/clickhouse/secrets.env
+{% if ch_numa_interleave | default(false) %}
+ExecStart=
+ExecStart=/usr/bin/numactl --interleave=all /usr/bin/clickhouse-server --config=/etc/clickhouse-server/config.xml
+{% endif %}

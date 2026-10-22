@@ -1,0 +1,24 @@
+---
+# Full convergence. Safe to run any time: no restarts (ch_allow_restart defaults to false).
+#   ansible-playbook -i inventories/prod playbooks/site.yml --check --diff     (nightly drift check)
+#   ansible-playbook -i inventories/prod playbooks/site.yml                    (pipeline apply)
+
+- name: Keeper nodes
+  hosts: keeper
+  become: true
+  serial: 1
+  roles:
+    - os_hardening
+    - vault_agent
+    - clickhouse_keeper
+    - otel_collector
+
+- name: ClickHouse data nodes
+  hosts: clickhouse
+  become: true
+  serial: "{{ ch_serial | default('25%') }}"
+  roles:
+    - os_hardening
+    - vault_agent
+    - clickhouse_server
+    - otel_collector

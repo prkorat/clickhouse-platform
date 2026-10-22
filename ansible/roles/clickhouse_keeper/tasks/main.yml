@@ -1,0 +1,55 @@
+---
+# Dedicated ClickHouse Keeper nodes (3, one per AZ). TLS on 9281 (client) and 9234 (Raft). Design doc Section 5.3.
+
+- name: ClickHouse package repository
+  ansible.builtin.yum_repository:
+    name: clickhouse-stable
+    description: ClickHouse stable
+    baseurl: https://packages.clickhouse.com/rpm/stable/
+    gpgkey: https://packages.clickhouse.com/rpm/stable/repodata/repomd.xml.key
+    gpgcheck: true
+    repo_gpgcheck: true
+
+- name: Install pinned Keeper
+  ansible.builtin.dnf:
+    name: "clickhouse-keeper-{{ ch_version }}"
+    state: present
+
+- name: Keeper data volume (dedicated gp3, low-latency fsync)
+  community.general.filesystem:
+    dev: "{{ keeper_data_device }}"
+    fstype: ext4
+
+- name: Mount Keeper data volume
+  ansible.posix.mount:
+    path: /var/lib/clickhouse-keeper
+    src: "{{ keeper_data_device }}"
+    fstype: ext4
+    opts: defaults,noatime,nofail
+    state: mounted
+
+- name: Directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: clickhouse
+    group: clickhouse
+    mode: "0750"
+  loop:
+    - /var/lib/clickhouse-keeper
+    - /etc/clickhouse-keeper/tls
+
+- name: Keeper config
+  ansible.builtin.template:
+    src: keeper_config.xml.j2
+    dest: /etc/clickhouse-keeper/keeper_config.xml
+    owner: root
+    group: clickhouse
+    mode: "0640"
+  notify: Restart Keeper (only when allowed)
+
+- name: Keeper service
+  ansible.builtin.systemd:
+    name: clickhouse-keeper
+    enabled: true
+    state: started

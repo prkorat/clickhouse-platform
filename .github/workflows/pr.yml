@@ -1,0 +1,155 @@
+# Pull-request gate (design doc Sections 6.2-6.3). All jobs are required checks on main.
+name: pr-checks
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  CONFTEST_VERSION: "0.56.0"
+  TERRAFORM_VERSION: "1.9.8"
+
+jobs:
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  policy:
+    name: policy-as-code (ClickHouse XML + OPA unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install conftest
+        run: |
+          curl -sSL "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" | tar xz conftest
+          sudo mv conftest /usr/local/bin/
+      - run: conftest verify -p policies/clickhouse
+      - run: conftest verify -p policies/terraform
+      - name: ClickHouse config must keep plaintext ports off, mTLS strict, default-deny row policies
+        run: conftest test --parser xml -p policies/clickhouse clickhouse/config.d clickhouse/users.d
+
+  terraform:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [prod-use1, dr-usw2, staging, backup-account]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "${{ env.TERRAFORM_VERSION }}" }
+      - run: terraform fmt -check -recursive terraform
+      - run: terraform -chdir=terraform/envs/${{ matrix.env }} init -backend=false -input=false
+      - run: terraform -chdir=terraform/envs/${{ matrix.env }} validate
+
+  iac-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform
+          framework: terraform
+          soft_fail: false
+          skip_check: CKV_AWS_144,CKV2_AWS_62   # CRR and event notifications: handled in backup-account / not used
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          skip-dirs: local
+
+  ansible-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install ansible-core==2.17.* ansible-lint==24.*
+      - run: ansible-galaxy collection install -r ansible/requirements.yml
+      - run: ansible-lint ansible/
+        working-directory: .
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -x scripts/*.sh tests/*.sh
+
+  migration-guard:
+    name: migrations are append-only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Applied migrations must never change
+        run: |
+          base="origin/${{ github.base_ref }}"
+          changed=$(git diff --name-only --diff-filter=MDR "$base"...HEAD -- clickhouse/migrations/ || true)
+          if [ -n "$changed" ]; then
+            echo "::error::Existing migrations were modified, renamed or deleted. Add a new V<next>__*.sql instead:"
+            echo "$changed"
+            exit 1
+          fi
+      - name: New migrations follow the naming convention and ON CLUSTER rule
+        run: |
+          base="origin/${{ github.base_ref }}"
+          for f in $(git diff --name-only --diff-filter=A "$base"...HEAD -- clickhouse/migrations/); do
+            [[ "$(basename "$f")" =~ ^V[0-9]{3}__[a-z0-9_]+\.sql$ ]] || { echo "::error file=$f::bad name"; exit 1; }
+            ddl='^\s*(CREATE|ALTER|DROP|RENAME)\s+(OR\s+REPLACE\s+)?(TABLE|DATABASE|DICTIONARY|VIEW|MATERIALIZED|FUNCTION)'
+            if grep -iE "$ddl" "$f" | grep -viq "ON CLUSTER"; then
+              echo "::error file=$f::every DDL statement must include ON CLUSTER '{cluster}' on its first line"; exit 1
+            fi
+          done
+
+  integration:
+    name: integration (local 2x2 cluster, security tests)
+    runs-on: ubuntu-latest
+    needs: [policy, migration-guard]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start cluster, apply access + migrations, seed, run tests
+        run: make test
+      - name: Server logs on failure
+        if: failure()
+        run: docker compose -f local/docker-compose.yml logs --tail=200 ch-s1-r1 ch-s2-r1
+      - if: always()
+        run: make down
+
+  plan:
+    name: terraform plan (prod) + plan policy
+    runs-on: ubuntu-latest
+    needs: [terraform, iac-scan]
+    if: github.event.pull_request.head.repo.full_name == github.repository   # no cloud creds for forks
+    permissions:
+      contents: read
+      id-token: write          # GitHub OIDC -> AWS, no stored keys
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "${{ env.TERRAFORM_VERSION }}" }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/gha-clickhouse-plan
+          aws-region: us-east-1
+      - name: Install conftest
+        run: |
+          curl -sSL "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" | tar xz conftest
+          sudo mv conftest /usr/local/bin/
+      - run: terraform -chdir=terraform/envs/prod-use1 init -input=false
+      - run: terraform -chdir=terraform/envs/prod-use1 plan -out=tfplan -input=false -lock=false
+      - run: terraform -chdir=terraform/envs/prod-use1 show -json tfplan > plan.json
+      - run: conftest test plan.json -p policies/terraform

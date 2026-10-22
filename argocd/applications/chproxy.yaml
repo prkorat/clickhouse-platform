@@ -1,0 +1,19 @@
+# chproxy: the only client entry point (PrivateLink NLB -> chproxy -> data nodes over mTLS).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: chproxy
+  namespace: argocd
+spec:
+  project: data-platform
+  source:
+    repoURL: https://github.com/example-org/clickhouse-platform.git
+    targetRevision: main
+    path: argocd/manifests/chproxy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: clickhouse-proxy
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

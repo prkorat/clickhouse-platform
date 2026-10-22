@@ -1,0 +1,60 @@
+# Managed by Ansible (roles/vault_agent). Design doc Section 4.5.
+{% set is_keeper = 'keeper' in group_names %}
+{% set tls_dir = '/etc/clickhouse-keeper/tls' if is_keeper else '/etc/clickhouse-server/tls' %}
+{% set fqdn = inventory_hostname ~ '.' ~ ch_dns_zone %}
+vault {
+  address = "{{ vault_addr }}"
+}
+
+auto_auth {
+  method "aws" {
+    config = {
+      type = "iam"
+      role = "{{ vault_aws_auth_role }}"
+    }
+  }
+}
+
+# Server certificate (serverAuth + clientAuth: nodes are also clients of each other). Picked up by
+# ClickHouse on the next connection after the file changes; no restart needed.
+template {
+  contents    = "{{ '{{' }} with pkiCert \"{{ vault_pki_role }}\" \"common_name={{ fqdn }}\" \"alt_names={{ fqdn }}\" \"ttl={{ vault_cert_ttl }}\" {{ '}}' }}{{ '{{' }} .Cert {{ '}}' }}{{ '{{' }} .CA {{ '}}' }}{{ '{{' }} .Key | writeToFile \"{{ tls_dir }}/{{ 'keeper' if is_keeper else 'server' }}.key\" \"clickhouse\" \"clickhouse\" \"0400\" {{ '}}' }}{{ '{{' }} end {{ '}}' }}"
+  destination = "{{ tls_dir }}/{{ 'keeper' if is_keeper else 'server' }}.crt"
+  perms       = "0440"
+}
+
+template {
+  contents    = "{{ '{{' }} with secret \"pki_int_clickhouse/cert/ca_chain\" {{ '}}' }}{{ '{{' }} .Data.ca_chain {{ '}}' }}{{ '{{' }} end {{ '}}' }}"
+  destination = "{{ tls_dir }}/ca-bundle.crt"
+  perms       = "0444"
+}
+
+{% if not is_keeper %}
+# Secrets as environment variables for from_env in config (cluster secret, interserver password,
+# Keeper identity, disk encryption keys). tmpfs only; ClickHouse reads it at start.
+template {
+  contents    = <<-EOT
+{{ '{{' }} with secret "{{ vault_secret_path }}" {{ '}}' }}
+CH_CLUSTER_SECRET={{ '{{' }} .Data.data.cluster_secret {{ '}}' }}
+CH_INTERSERVER_PASSWORD={{ '{{' }} .Data.data.interserver_password {{ '}}' }}
+CH_KEEPER_IDENTITY={{ '{{' }} .Data.data.keeper_identity {{ '}}' }}
+{% for k in ch_disk_key_ids | default([1, 2]) %}
+CH_DISK_KEY_{{ k }}={{ '{{' }} index .Data.data "disk_key_{{ k }}" {{ '}}' }}
+{% endfor %}
+CH_REGULATED_KEY_1={{ '{{' }} .Data.data.regulated_key_1 {{ '}}' }}
+{{ '{{' }} end {{ '}}' }}
+  EOT
+  destination = "/run/clickhouse/secrets.env"
+  perms       = "0400"
+  user        = "clickhouse"
+}
+{% endif %}
+
+{% if not is_keeper %}
+# On-node ops client certificate (CN=svc_node_ops, HOST LOCAL in ClickHouse) used by Ansible playbooks.
+template {
+  contents    = "{{ '{{' }} with pkiCert \"{{ vault_pki_client_role }}\" \"common_name=svc_node_ops\" \"ttl=24h\" {{ '}}' }}{{ '{{' }} .Cert {{ '}}' }}{{ '{{' }} .Key | writeToFile \"/etc/clickhouse-client/tls/svc_node_ops.key\" \"root\" \"root\" \"0400\" {{ '}}' }}{{ '{{' }} end {{ '}}' }}"
+  destination = "/etc/clickhouse-client/tls/svc_node_ops.crt"
+  perms       = "0400"
+}
+{% endif %}

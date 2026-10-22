@@ -1,0 +1,42 @@
+<!-- Identity: LDAP directory, replicated SQL access storage, secure defaults (design doc Section 4.3 / 5.4). -->
+<clickhouse>
+  <ldap_servers>
+    <corp_ad>
+      <host>ldaps.corp.example.com</host>          <!-- internal NLB over 2+ domain controllers or Entra DS -->
+      <port>636</port>
+      <enable_tls>yes</enable_tls>
+      <tls_minimum_protocol_version>tls1.2</tls_minimum_protocol_version>
+      <tls_require_cert>demand</tls_require_cert>
+      <tls_ca_cert_file>/etc/clickhouse-server/tls/corp-ad-ca.crt</tls_ca_cert_file>
+      <bind_dn>{user_name}@corp.example.com</bind_dn>
+      <user_dn_detection>
+        <base_dn>OU=Users,DC=corp,DC=example,DC=com</base_dn>
+        <search_filter>(&amp;(objectClass=user)(userPrincipalName={bind_dn}))</search_filter>
+      </user_dn_detection>
+      <verification_cooldown>300</verification_cooldown>   <!-- re-check with AD at most every 5 min -->
+    </corp_ad>
+  </ldap_servers>
+
+  <user_directories replace="replace">   <!-- exactly these; drops the default local_directory -->
+    <users_xml><path>users.xml</path></users_xml>           <!-- contains no users except disabled 'default' -->
+    <replicated><zookeeper_path>/clickhouse/access/</zookeeper_path></replicated>  <!-- SQL users/roles cluster-wide -->
+    <ldap>
+      <server>corp_ad</server>
+      <role_mapping>
+        <base_dn>OU=ClickHouse,OU=Groups,DC=corp,DC=example,DC=com</base_dn>
+        <attribute>CN</attribute>
+        <scope>subtree</scope>
+        <search_filter>(&amp;(objectClass=group)(member={user_dn}))</search_filter>
+        <prefix>CH-Prod-</prefix>                            <!-- CH-Prod-role_bi_analyst -> role_bi_analyst -->
+      </role_mapping>
+    </ldap>
+  </user_directories>
+
+  <access_control_improvements>
+    <users_without_row_policies_can_read_rows>false</users_without_row_policies_can_read_rows>
+    <select_from_system_db_requires_grant>true</select_from_system_db_requires_grant>
+    <select_from_information_schema_requires_grant>true</select_from_information_schema_requires_grant>
+    <settings_constraints_replace_previous>true</settings_constraints_replace_previous>
+    <on_cluster_queries_require_cluster_grant>true</on_cluster_queries_require_cluster_grant>
+  </access_control_improvements>
+</clickhouse>

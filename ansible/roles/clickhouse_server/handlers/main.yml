@@ -1,0 +1,11 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+# Listener, storage and package changes need a restart, which only rolling playbooks allow.
+- name: Restart ClickHouse (only when allowed)
+  ansible.builtin.systemd:
+    name: clickhouse-server
+    state: restarted
+  when: ch_allow_restart | bool

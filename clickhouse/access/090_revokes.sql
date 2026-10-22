@@ -1,0 +1,5 @@
+-- Explicit revokes. When you remove a GRANT from 020_grants.sql, add the matching REVOKE here
+-- so the change is applied on the next deploy. Keep entries for at least one release, then delete.
+--
+-- Example:
+-- REVOKE SELECT ON analytics.* FROM role_readonly;

@@ -1,0 +1,8 @@
+<!-- LOCAL ONLY. Per-node identity, the same macro names as production (cluster, shard, replica). -->
+<clickhouse>
+  <macros>
+    <cluster>local</cluster>
+    <shard>01</shard>
+    <replica>ch-s1-r2</replica>
+  </macros>
+</clickhouse>

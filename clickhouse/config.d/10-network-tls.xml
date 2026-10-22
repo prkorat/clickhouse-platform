@@ -1,0 +1,56 @@
+<!--
+  Network and TLS baseline for every data node (design doc Section 4.1 / 5.3).
+  Static file: identical on all nodes. Per-node values (macros, remote_servers,
+  zookeeper, interserver host) are rendered by Ansible into 90-node.xml.
+  Policy-checked in CI by policies/clickhouse/*.rego.
+-->
+<clickhouse>
+  <listen_host>0.0.0.0</listen_host>
+
+  <!-- Plaintext and unused protocol ports off -->
+  <http_port remove="1"/>
+  <tcp_port remove="1"/>
+  <interserver_http_port remove="1"/>
+  <mysql_port remove="1"/>
+  <postgresql_port remove="1"/>
+
+  <!-- TLS ports -->
+  <https_port>8443</https_port>
+  <tcp_port_secure>9440</tcp_port_secure>
+  <interserver_https_port>9010</interserver_https_port>
+  <interserver_http_credentials>
+    <user>interserver</user>
+    <password from_env="CH_INTERSERVER_PASSWORD"/>
+  </interserver_http_credentials>
+
+  <openSSL>
+    <server>
+      <certificateFile>/etc/clickhouse-server/tls/server.crt</certificateFile>
+      <privateKeyFile>/etc/clickhouse-server/tls/server.key</privateKeyFile>
+      <caConfig>/etc/clickhouse-server/tls/ca-bundle.crt</caConfig>
+      <loadDefaultCAFile>false</loadDefaultCAFile>
+      <verificationMode>strict</verificationMode>   <!-- client certificate required -->
+      <disableProtocols>sslv2,sslv3,tlsv1,tlsv1_1</disableProtocols>
+      <cipherList>ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305</cipherList>
+      <preferServerCiphers>true</preferServerCiphers>
+      <cacheSessions>true</cacheSessions>
+    </server>
+    <client>  <!-- used for distributed queries, replica fetches and Keeper connections -->
+      <certificateFile>/etc/clickhouse-server/tls/server.crt</certificateFile>
+      <privateKeyFile>/etc/clickhouse-server/tls/server.key</privateKeyFile>
+      <caConfig>/etc/clickhouse-server/tls/ca-bundle.crt</caConfig>
+      <loadDefaultCAFile>false</loadDefaultCAFile>
+      <verificationMode>strict</verificationMode>
+      <disableProtocols>sslv2,sslv3,tlsv1,tlsv1_1</disableProtocols>
+      <invalidCertificateHandler><name>RejectCertificateHandler</name></invalidCertificateHandler>
+    </client>
+  </openSSL>
+
+  <prometheus>
+    <endpoint>/metrics</endpoint>
+    <port>9363</port>
+    <metrics>true</metrics>
+    <events>true</events>
+    <asynchronous_metrics>true</asynchronous_metrics>
+  </prometheus>
+</clickhouse>

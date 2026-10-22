@@ -1,0 +1,57 @@
+---
+# Design doc Section 5.2. Idempotent: arrays are created only if they do not exist yet.
+# Hot: RAID 0 over 4 instance-store NVMe (replicas provide redundancy; instance store is wiped on stop).
+# Warm: RAID 0 over 4 encrypted gp3 volumes.
+
+- name: Discover instance-store and EBS NVMe devices
+  ansible.builtin.shell: |
+    set -o pipefail
+    for d in /dev/nvme*n1; do
+      model=$(cat /sys/block/$(basename $d)/device/model 2>/dev/null | xargs)
+      echo "$d|$model"
+    done
+  args:
+    executable: /bin/bash
+  register: nvme_devices
+  changed_when: false
+
+- name: Classify devices
+  ansible.builtin.set_fact:
+    instance_store_devices: "{{ nvme_devices.stdout_lines | select('search', 'Instance Storage') | map('split', '|') | map('first') | list }}"
+    warm_devices: "{{ nvme_devices.stdout_lines | select('search', 'Elastic Block Store') | map('split', '|') | map('first') | reject('equalto', '/dev/nvme0n1') | list }}"
+
+- name: Create hot RAID 0
+  ansible.builtin.command: >
+    mdadm --create /dev/md0 --level=0 --raid-devices={{ instance_store_devices | length }} --chunk=1024
+    {{ instance_store_devices | join(' ') }}
+  args:
+    creates: /dev/md0
+  when: instance_store_devices | length > 0
+
+- name: Create warm RAID 0
+  ansible.builtin.command: >
+    mdadm --create /dev/md1 --level=0 --raid-devices={{ warm_devices | length }} --chunk=1024
+    {{ warm_devices | join(' ') }}
+  args:
+    creates: /dev/md1
+  when: warm_devices | length > 0
+
+- name: Filesystems
+  community.general.filesystem:
+    dev: "{{ item.dev }}"
+    fstype: ext4
+    opts: "{{ item.opts }}"
+  loop:
+    - { dev: /dev/md0, opts: "-m 0 -E stride=256,stripe-width=1024" }
+    - { dev: /dev/md1, opts: "-m 0" }
+
+- name: Mounts
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    src: "{{ item.dev }}"
+    fstype: ext4
+    opts: defaults,noatime,nodiratime,nofail
+    state: mounted
+  loop:
+    - { dev: /dev/md0, path: /data/nvme }
+    - { dev: /dev/md1, path: /data/warm }

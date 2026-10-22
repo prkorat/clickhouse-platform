@@ -1,0 +1,22 @@
+---
+# OpenTelemetry Collector: host metrics + ClickHouse server logs -> central stack (design doc Section 6.1).
+# ClickHouse and Keeper metrics are scraped directly by Prometheus on :9363.
+
+- name: Install otelcol-contrib
+  ansible.builtin.dnf:
+    name: "otelcol-contrib-{{ otel_version }}"
+    state: present
+    disable_gpg_check: false
+
+- name: Collector config
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/otelcol-contrib/config.yaml
+    mode: "0640"
+  notify: Restart otelcol
+
+- name: Collector service
+  ansible.builtin.systemd:
+    name: otelcol-contrib
+    enabled: true
+    state: started

@@ -1,0 +1,90 @@
+---
+# OS baseline for ClickHouse data and Keeper nodes (design doc Sections 5.1-5.2, 8).
+# Most CIS controls are baked into the AMI by Packer; this role enforces the ClickHouse-specific ones
+# and is safe to re-run (drift check runs it nightly with --check --diff).
+
+- name: Ensure the clickhouse system account exists before Vault Agent renders files owned by it (packages reuse it)
+  ansible.builtin.user:
+    name: clickhouse
+    system: true
+    shell: /sbin/nologin
+    create_home: false
+    home: /var/lib/clickhouse
+
+- name: Kernel parameters
+  ansible.builtin.copy:
+    src: 90-clickhouse.conf
+    dest: /etc/sysctl.d/90-clickhouse.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload sysctl
+
+- name: Disable swap now
+  ansible.builtin.command: swapoff -a
+  when: ansible_swaptotal_mb > 0
+  changed_when: true
+
+- name: Disable swap permanently
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\sswap\s.*)$'
+    replace: '# \1'
+
+- name: Transparent huge pages = madvise (runtime)
+  ansible.builtin.shell: |
+    set -e
+    for f in enabled defrag; do
+      if ! grep -q '\[madvise\]' /sys/kernel/mm/transparent_hugepage/$f; then
+        echo madvise > /sys/kernel/mm/transparent_hugepage/$f; echo changed
+      fi
+    done
+  register: thp
+  changed_when: "'changed' in thp.stdout"
+
+- name: Transparent huge pages = madvise (kernel command line)
+  ansible.builtin.command: grubby --update-kernel=ALL --args="transparent_hugepage=madvise"
+  register: grubby
+  changed_when: false
+
+- name: NVMe scheduler none, persisted by udev
+  ansible.builtin.copy:
+    src: 60-clickhouse-io.rules
+    dest: /etc/udev/rules.d/60-clickhouse-io.rules
+    mode: "0644"
+  notify: Reload udev
+
+- name: CPU governor performance
+  ansible.builtin.command: cpupower frequency-set -g performance
+  changed_when: false
+  failed_when: false  # not exposed on some Nitro instance types
+
+- name: Limits for interactive sessions as clickhouse
+  ansible.builtin.copy:
+    src: limits-clickhouse.conf
+    dest: /etc/security/limits.d/clickhouse.conf
+    mode: "0644"
+
+- name: Host firewall (defence in depth behind security groups)
+  ansible.builtin.template:
+    src: clickhouse.nft.j2
+    dest: /etc/nftables.d/clickhouse.nft
+    mode: "0600"
+    validate: nft -c -f %s
+  notify: Reload nftables
+
+- name: No SSH daemon (access is SSM Session Manager only)
+  ansible.builtin.systemd:
+    name: sshd
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Disable core dumps system-wide (they would contain query data)
+  ansible.builtin.copy:
+    dest: /etc/systemd/coredump.conf.d/disable.conf
+    content: |
+      [Coredump]
+      Storage=none
+      ProcessSizeMax=0
+    mode: "0644"

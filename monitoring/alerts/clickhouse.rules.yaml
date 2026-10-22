@@ -1,0 +1,173 @@
+# Prometheus alert rules (design doc Section 6.1). Every alert links a runbook in runbooks/.
+# Severity: critical -> PagerDuty, warning -> team channel (monitoring/alertmanager.yaml).
+groups:
+  - name: clickhouse-availability
+    rules:
+      - alert: ClickHouseSyntheticCheckFailing
+        expr: sum(probe_success{job="chproxy-select1"}) == 0
+        for: 90s # 3 consecutive 30 s probes
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "SELECT 1 through chproxy is failing"
+          runbook: "runbooks/README.md#triage"
+
+      - alert: ClickHouseNodeDown
+        expr: up{job="clickhouse"} == 0
+        for: 2m
+        labels: { severity: warning, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} is not scrapeable (peer replica serves its shard)"
+          runbook: "runbooks/replace-node.md"
+
+  - name: clickhouse-replication
+    rules:
+      - alert: ClickHouseReadonlyReplica
+        expr: ClickHouseMetrics_ReadonlyReplica > 0
+        for: 2m
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} has read-only replicas (Keeper session lost)"
+          runbook: "runbooks/keeper-quorum-loss.md"
+
+      - alert: ClickHouseReplicationLagWarning
+        expr: ClickHouseAsyncMetrics_ReplicasMaxAbsoluteDelay > 300
+        for: 10m
+        labels: { severity: warning, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} replication delay {{ $value | humanizeDuration }}"
+          runbook: "runbooks/README.md#replication-lag"
+
+      - alert: ClickHouseReplicationLagCritical
+        expr: ClickHouseAsyncMetrics_ReplicasMaxAbsoluteDelay > 1800
+        for: 10m
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} replication delay {{ $value | humanizeDuration }}"
+          runbook: "runbooks/README.md#replication-lag"
+
+      - alert: ClickHouseDistributedQueueBacklog
+        expr: ClickHouseMetrics_DistributedFilesToInsert > 1000
+        for: 10m
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} has {{ $value }} pending distributed inserts"
+          runbook: "runbooks/too-many-parts.md"
+
+  - name: clickhouse-ingestion
+    rules:
+      - alert: ClickHouseTooManyPartsWarning
+        expr: ClickHouseAsyncMetrics_MaxPartCountForPartition > 500
+        for: 5m
+        labels: { severity: warning, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} max parts per partition {{ $value }}"
+          runbook: "runbooks/too-many-parts.md"
+
+      - alert: ClickHouseTooManyPartsCritical
+        expr: ClickHouseAsyncMetrics_MaxPartCountForPartition > 1000
+        for: 5m
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} inserts are being delayed ({{ $value }} parts)"
+          runbook: "runbooks/too-many-parts.md"
+
+      - alert: ClickHouseRejectedInserts
+        expr: increase(ClickHouseProfileEvents_RejectedInserts[5m]) > 0
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} is rejecting inserts"
+          runbook: "runbooks/too-many-parts.md"
+
+      - alert: IngestionLagRPOAtRisk
+        expr: max by (connector) (kafka_connect_consumer_lag_seconds) > 900
+        for: 5m
+        labels: { severity: critical, team: data-eng }
+        annotations:
+          summary: "Kafka Connect {{ $labels.connector }} lag above 15 min (RPO at risk)"
+          runbook: "runbooks/README.md#ingestion-lag"
+
+      - alert: ClickHouseStuckMutation
+        expr: clickhouse_sql_oldest_unfinished_mutation_seconds > 21600
+        labels: { severity: warning, team: dbre }
+        annotations:
+          summary: "A mutation has been running for over 6 h"
+          runbook: "runbooks/stuck-mutation.md"
+
+  - name: clickhouse-resources
+    rules:
+      - alert: ClickHouseMemoryHigh
+        expr: ClickHouseMetrics_MemoryTracking / ClickHouseAsyncMetrics_OSMemoryTotal > 0.9
+        for: 5m
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} tracked memory above 90% of RAM"
+          runbook: "runbooks/README.md#memory"
+
+      - alert: ClickHouseConcurrencyNearLimit
+        expr: ClickHouseMetrics_Query > 350
+        for: 5m
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} running {{ $value }} queries (limit 400)"
+          runbook: "runbooks/README.md#concurrency"
+
+      - alert: ClickHouseErrorRateHigh
+        expr: |
+          sum by (instance) (rate(ClickHouseProfileEvents_FailedQuery[5m]))
+            / sum by (instance) (rate(ClickHouseProfileEvents_Query[5m])) > 0.05
+        for: 10m
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} failing {{ $value | humanizePercentage }} of queries"
+          runbook: "runbooks/README.md#triage"
+
+      - alert: ClickHouseHotDiskFull
+        expr: |
+          node_filesystem_avail_bytes{mountpoint="/data/nvme"}
+            / node_filesystem_size_bytes{mountpoint="/data/nvme"} < 0.15
+        for: 10m
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} hot volume below 15% free"
+          runbook: "runbooks/README.md#disk"
+
+  - name: keeper
+    rules:
+      - alert: KeeperQuorumDegraded
+        expr: keeper_mntr_zk_synced_followers{role="leader"} < 2
+        for: 1m
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "Keeper leader has {{ $value }} synced followers"
+          runbook: "runbooks/keeper-quorum-loss.md"
+
+      - alert: KeeperLatencyHigh
+        expr: keeper_mntr_zk_avg_latency > 50
+        for: 5m
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} Keeper avg latency {{ $value }} ms"
+          runbook: "runbooks/keeper-quorum-loss.md"
+
+  - name: security-and-backup
+    rules:
+      - alert: TLSCertificateExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 3 * 86400
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "{{ $labels.instance }} certificate expires in under 3 days (Vault Agent renewal failing?)"
+          runbook: "runbooks/README.md#tls"
+
+      - alert: BackupIncrementalMissing
+        expr: time() - clickhouse_sql_last_successful_backup_timestamp{kind="incremental"} > 50 * 3600
+        labels: { severity: critical, team: dbre }
+        annotations:
+          summary: "No successful incremental backup for 50 h"
+          runbook: "runbooks/restore.md"
+
+      - alert: BreakGlassLogin
+        expr: increase(clickhouse_sql_breakglass_logins_total[5m]) > 0
+        labels: { severity: critical, team: security }
+        annotations:
+          summary: "Break-glass admin login detected"
+          runbook: "runbooks/README.md#break-glass"

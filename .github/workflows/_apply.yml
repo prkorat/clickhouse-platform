@@ -1,0 +1,76 @@
+# Reusable: apply one environment. Called by deploy.yml.
+name: apply-environment
+
+on:
+  workflow_call:
+    inputs:
+      environment: { type: string, required: true }
+      tf_env: { type: string, required: true }
+      ansible_inventory: { type: string, required: true }
+      aws_role: { type: string, required: true }
+      ch_host: { type: string, required: true }
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  apply:
+    runs-on: [self-hosted, clickhouse-ops]   # inside the VPC: reaches chproxy over PrivateLink and nodes via SSM
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws_role }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8" }
+
+      - name: Terraform apply
+        run: |
+          terraform -chdir=terraform/envs/${{ inputs.tf_env }} init -input=false
+          terraform -chdir=terraform/envs/${{ inputs.tf_env }} apply -input=false -auto-approve
+
+      - name: Ansible converge (no restarts)
+        working-directory: ansible
+        run: |
+          ansible-galaxy collection install -r requirements.yml
+          ansible-playbook -i inventories/${{ inputs.ansible_inventory }} playbooks/site.yml
+
+      - name: Client certificate for svc_ci_deployer (Vault PKI, 1 h)
+        run: |
+          mkdir -p ~/.clickhouse-client/tls
+          vault write -format=json pki_int_clickhouse/issue/ch-client common_name=svc_ci_deployer ttl=1h > /tmp/cert.json
+          jq -r .data.certificate /tmp/cert.json > ~/.clickhouse-client/tls/client.crt
+          jq -r .data.private_key /tmp/cert.json > ~/.clickhouse-client/tls/client.key
+          jq -r '.data.ca_chain[]' /tmp/cert.json > ~/.clickhouse-client/tls/ca.crt
+          rm /tmp/cert.json && chmod 600 ~/.clickhouse-client/tls/client.key
+          cat > ~/.clickhouse-client/config.xml <<EOF
+          <config><openSSL><client>
+            <certificateFile>$HOME/.clickhouse-client/tls/client.crt</certificateFile>
+            <privateKeyFile>$HOME/.clickhouse-client/tls/client.key</privateKeyFile>
+            <caConfig>$HOME/.clickhouse-client/tls/ca.crt</caConfig>
+            <verificationMode>strict</verificationMode>
+          </client></openSSL></config>
+          EOF
+        env:
+          VAULT_ADDR: https://vault.corp.example.com:8200
+
+      - name: Access model (roles, grants, profiles, quotas, row policies, users)
+        env:
+          CH_CLIENT: clickhouse-client --host ${{ inputs.ch_host }} --port 9440 --secure --user svc_ci_deployer
+          ENV: ${{ inputs.ansible_inventory }}
+        run: scripts/apply-access.sh
+
+      - name: Schema migrations
+        env:
+          CH_CLIENT: clickhouse-client --host ${{ inputs.ch_host }} --port 9440 --secure --user svc_ci_deployer
+          GIT_SHA: ${{ github.sha }}
+        run: scripts/migrate.sh
+
+      - name: Remove client key
+        if: always()
+        run: rm -rf ~/.clickhouse-client/tls

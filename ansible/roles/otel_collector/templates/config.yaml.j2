@@ -1,0 +1,44 @@
+# Managed by Ansible (roles/otel_collector).
+receivers:
+  hostmetrics:
+    collection_interval: 30s
+    scrapers:
+      cpu: {}
+      memory: {}
+      load: {}
+      disk: {}
+      filesystem: {}
+      network: {}
+      paging: {}
+  filelog/clickhouse:
+    include:
+      - /var/log/clickhouse-server/clickhouse-server.err.log
+      - /var/log/clickhouse-keeper/clickhouse-keeper.err.log
+    start_at: end
+    multiline:
+      line_start_pattern: '^\d{4}\.\d{2}\.\d{2} '
+
+processors:
+  batch: {}
+  resource:
+    attributes:
+      - { key: host.name, value: "{{ inventory_hostname }}", action: upsert }
+      - { key: deployment.environment, value: "{{ ch_env }}", action: upsert }
+      - { key: service.name, value: "{{ 'clickhouse-keeper' if 'keeper' in group_names else 'clickhouse-server' }}", action: upsert }
+
+exporters:
+  otlp:
+    endpoint: "{{ otel_gateway_endpoint }}"
+    tls:
+      ca_file: /etc/pki/tls/certs/ca-bundle.crt
+
+service:
+  pipelines:
+    metrics:
+      receivers: [hostmetrics]
+      processors: [resource, batch]
+      exporters: [otlp]
+    logs:
+      receivers: [filelog/clickhouse]
+      processors: [resource, batch]
+      exporters: [otlp]

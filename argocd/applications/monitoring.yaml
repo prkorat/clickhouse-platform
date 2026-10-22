@@ -1,0 +1,22 @@
+# GitOps for the observability stack on EKS (design doc Section 6.2). ArgoCD reconciles continuously,
+# so monitoring config cannot drift from Git.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: clickhouse-monitoring
+  namespace: argocd
+spec:
+  project: data-platform
+  source:
+    repoURL: https://github.com/example-org/clickhouse-platform.git
+    targetRevision: main
+    path: argocd/manifests/monitoring
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

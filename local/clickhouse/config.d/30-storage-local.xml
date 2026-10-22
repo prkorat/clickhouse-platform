@@ -1,0 +1,67 @@
+<!--
+  LOCAL ONLY. Same storage policy and volume names as production (tiered, tiered_regulated with
+  hot/warm/cold volumes) so migrations run unchanged. Directories stand in for NVMe, gp3 and S3.
+  Production: ansible/roles/clickhouse_server/templates/30-storage.xml.j2.
+-->
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <nvme_raw><type>local</type><path>/var/lib/clickhouse/disks/nvme/</path></nvme_raw>
+      <warm_raw><type>local</type><path>/var/lib/clickhouse/disks/warm/</path></warm_raw>
+      <cold_raw><type>local</type><path>/var/lib/clickhouse/disks/cold/</path></cold_raw>
+
+      <hot>
+        <type>encrypted</type>
+        <disk>nvme_raw</disk>
+        <path>enc/</path>
+        <algorithm>AES_256_CTR</algorithm>
+        <key_hex id="1" from_env="CH_DISK_KEY_1"/>
+        <key_hex id="2" from_env="CH_DISK_KEY_2"/>
+        <current_key_id>2</current_key_id>
+      </hot>
+      <warm>
+        <type>encrypted</type>
+        <disk>warm_raw</disk>
+        <path>enc/</path>
+        <algorithm>AES_256_CTR</algorithm>
+        <key_hex id="1" from_env="CH_DISK_KEY_1"/>
+        <key_hex id="2" from_env="CH_DISK_KEY_2"/>
+        <current_key_id>2</current_key_id>
+      </warm>
+      <cold>
+        <type>encrypted</type>
+        <disk>cold_raw</disk>
+        <path>enc/</path>
+        <algorithm>AES_256_CTR</algorithm>
+        <key_hex id="1" from_env="CH_DISK_KEY_1"/>
+        <current_key_id>1</current_key_id>
+      </cold>
+      <cold_regulated>
+        <type>encrypted</type>
+        <disk>cold_raw</disk>
+        <path>regulated/</path>
+        <algorithm>AES_256_CTR</algorithm>
+        <key_hex id="1" from_env="CH_REGULATED_KEY_1"/>
+        <current_key_id>1</current_key_id>
+      </cold_regulated>
+    </disks>
+
+    <policies>
+      <tiered>
+        <volumes>
+          <hot><disk>hot</disk></hot>
+          <warm><disk>warm</disk></warm>
+          <cold><disk>cold</disk><prefer_not_to_merge>true</prefer_not_to_merge></cold>
+        </volumes>
+        <move_factor>0.1</move_factor>
+      </tiered>
+      <tiered_regulated>
+        <volumes>
+          <hot><disk>hot</disk></hot>
+          <warm><disk>warm</disk></warm>
+          <cold><disk>cold_regulated</disk><prefer_not_to_merge>true</prefer_not_to_merge></cold>
+        </volumes>
+      </tiered_regulated>
+    </policies>
+  </storage_configuration>
+</clickhouse>

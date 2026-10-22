@@ -1,0 +1,39 @@
+<!-- Managed by Ansible (roles/clickhouse_server). Per-node identity and cluster topology. Design doc Section 5.3. -->
+<clickhouse>
+  <interserver_http_host>{{ inventory_hostname }}.{{ ch_dns_zone }}</interserver_http_host>
+
+  <!-- ClickHouse <-> ClickHouse: distributed queries over native TLS with a cluster secret -->
+  <remote_servers replace="replace">
+    <{{ ch_cluster }}>
+      <secret from_env="CH_CLUSTER_SECRET"/>
+{% for shard in range(1, ch_shard_count + 1) %}
+      <shard>
+        <internal_replication>true</internal_replication>
+{% for r in range(1, ch_replicas_per_shard + 1) %}
+        <replica><host>{{ 'ch-s%02d-r%d' | format(shard, r) }}.{{ ch_dns_zone }}</host><port>9440</port><secure>1</secure></replica>
+{% endfor %}
+      </shard>
+{% endfor %}
+    </{{ ch_cluster }}>
+  </remote_servers>
+
+  <!-- ClickHouse -> Keeper over TLS with digest identity -->
+  <zookeeper>
+{% for k in groups['keeper'] %}
+    <node><host>{{ k }}.{{ ch_dns_zone }}</host><port>9281</port><secure>1</secure></node>
+{% endfor %}
+    <session_timeout_ms>30000</session_timeout_ms>
+    <operation_timeout_ms>10000</operation_timeout_ms>
+    <identity from_env="CH_KEEPER_IDENTITY"/>
+  </zookeeper>
+
+  <distributed_ddl>
+    <path>/clickhouse/task_queue/ddl</path>
+  </distributed_ddl>
+
+  <macros>
+    <cluster>{{ ch_cluster }}</cluster>
+    <shard>{{ shard }}</shard>
+    <replica>{{ replica }}</replica>
+  </macros>
+</clickhouse>

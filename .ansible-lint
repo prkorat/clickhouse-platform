@@ -1,0 +1,9 @@
+---
+profile: production
+exclude_paths:
+  - .github/
+  - local/
+  - terraform/
+mock_roles: []
+skip_list:
+  - var-naming[no-role-prefix]   # shared ch_* variables are intentionally cross-role

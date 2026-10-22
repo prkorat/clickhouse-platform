@@ -1,0 +1,44 @@
+<!-- Managed by Ansible (roles/clickhouse_keeper). Design doc Section 5.3. -->
+<clickhouse>
+  <listen_host>0.0.0.0</listen_host>
+  <keeper_server>
+    <tcp_port_secure>9281</tcp_port_secure>     <!-- 9181 plaintext is not configured -->
+    <server_id>{{ keeper_server_id }}</server_id>
+    <log_storage_path>/var/lib/clickhouse-keeper/logs</log_storage_path>
+    <snapshot_storage_path>/var/lib/clickhouse-keeper/snapshots</snapshot_storage_path>
+    <four_letter_word_white_list>ruok,mntr,srvr,stat,conf</four_letter_word_white_list>
+    <coordination_settings>
+      <operation_timeout_ms>10000</operation_timeout_ms>
+      <session_timeout_ms>30000</session_timeout_ms>
+      <force_sync>true</force_sync>
+      <snapshot_distance>100000</snapshot_distance>
+      <rotate_log_storage_interval>100000</rotate_log_storage_interval>
+      <raft_logs_level>information</raft_logs_level>
+    </coordination_settings>
+    <raft_configuration>
+      <secure>true</secure>                     <!-- Keeper <-> Keeper Raft over TLS -->
+{% for k in groups['keeper'] %}
+      <server><id>{{ hostvars[k].keeper_server_id }}</id><hostname>{{ k }}.{{ ch_dns_zone }}</hostname><port>9234</port></server>
+{% endfor %}
+    </raft_configuration>
+  </keeper_server>
+  <openSSL>
+    <server>
+      <certificateFile>/etc/clickhouse-keeper/tls/keeper.crt</certificateFile>
+      <privateKeyFile>/etc/clickhouse-keeper/tls/keeper.key</privateKeyFile>
+      <caConfig>/etc/clickhouse-keeper/tls/ca-bundle.crt</caConfig>
+      <loadDefaultCAFile>false</loadDefaultCAFile>
+      <verificationMode>strict</verificationMode>
+      <disableProtocols>sslv2,sslv3,tlsv1,tlsv1_1</disableProtocols>
+    </server>
+    <client>
+      <certificateFile>/etc/clickhouse-keeper/tls/keeper.crt</certificateFile>
+      <privateKeyFile>/etc/clickhouse-keeper/tls/keeper.key</privateKeyFile>
+      <caConfig>/etc/clickhouse-keeper/tls/ca-bundle.crt</caConfig>
+      <loadDefaultCAFile>false</loadDefaultCAFile>
+      <verificationMode>strict</verificationMode>
+      <invalidCertificateHandler><name>RejectCertificateHandler</name></invalidCertificateHandler>
+    </client>
+  </openSSL>
+  <prometheus><endpoint>/metrics</endpoint><port>9363</port><metrics>true</metrics><events>true</events><asynchronous_metrics>true</asynchronous_metrics></prometheus>
+</clickhouse>

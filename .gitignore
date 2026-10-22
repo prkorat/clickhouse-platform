@@ -1,0 +1,33 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl.bak
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+plan.json
+terraform.tfvars
+crash.log
+
+# Secrets and generated certificates (never commit)
+local/tls/
+*.key
+*.pem
+*.p12
+.env
+secrets.env
+
+# Ansible
+*.retry
+.ansible/
+
+# Editors / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Python tooling
+__pycache__/
+.venv/

@@ -1,0 +1,7 @@
+<!-- Keep PII literals out of query_log and server logs (design doc Section 4.7). -->
+<clickhouse>
+  <query_masking_rules>
+    <rule><name>email</name><regexp>[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}</regexp><replace>***@***</replace></rule>
+    <rule><name>pan</name><regexp>\b(?:\d[ -]?){13,19}\b</regexp><replace>****PAN****</replace></rule>
+  </query_masking_rules>
+</clickhouse>

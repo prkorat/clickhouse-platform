@@ -1,0 +1,51 @@
+# Metrics derived from system tables (design doc Section 6.1), exposed by a SQL exporter
+# (e.g. burningalchemist/sql_exporter) connected as a read-only monitoring user over mTLS.
+# Metric names match the clickhouse_sql_* series used in alerts/clickhouse.rules.yaml.
+metrics:
+  - metric_name: clickhouse_sql_oldest_unfinished_mutation_seconds
+    type: gauge
+    help: Age of the oldest unfinished mutation
+    values: [age]
+    query: |
+      SELECT coalesce(max(dateDiff('second', create_time, now())), 0) AS age
+      FROM clusterAllReplicas('{cluster}', system.mutations) WHERE is_done = 0
+
+  - metric_name: clickhouse_sql_last_successful_backup_timestamp
+    type: gauge
+    help: Unix time of the last successful backup by kind
+    key_labels: [kind]
+    values: [ts]
+    query: |
+      SELECT backup_kind AS kind, toUnixTimestamp(max(finished_at)) AS ts
+      FROM governance.backup_catalog WHERE status = 'BACKUP_CREATED' GROUP BY backup_kind
+
+  - metric_name: clickhouse_sql_breakglass_logins_total
+    type: counter
+    help: Logins by break-glass users
+    values: [n]
+    query: |
+      SELECT count() AS n FROM clusterAllReplicas('{cluster}', system.session_log)
+      WHERE type = 'LoginSuccess' AND user LIKE 'admin_breakglass_%'
+
+  - metric_name: clickhouse_sql_query_duration_p95_seconds
+    type: gauge
+    help: p95 query duration over the last 5 minutes by profile class
+    key_labels: [user_class]
+    values: [p95]
+    query: |
+      SELECT multiIf(user LIKE 'svc_%', 'service', has(current_roles, 'role_bi_analyst'), 'bi', 'other') AS user_class,
+             quantile(0.95)(query_duration_ms) / 1000 AS p95
+      FROM clusterAllReplicas('{cluster}', system.query_log)
+      WHERE type = 'QueryFinish' AND event_time > now() - INTERVAL 5 MINUTE
+      GROUP BY user_class
+
+  - metric_name: clickhouse_sql_failed_logins_5m
+    type: gauge
+    help: Failed logins per source address in the last 5 minutes
+    key_labels: [client_address]
+    values: [n]
+    query: |
+      SELECT toString(client_address) AS client_address, count() AS n
+      FROM clusterAllReplicas('{cluster}', system.session_log)
+      WHERE type = 'LoginFailure' AND event_time > now() - INTERVAL 5 MINUTE
+      GROUP BY client_address

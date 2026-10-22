@@ -1,0 +1,20 @@
+# Kafka Connect ClickHouse sink (exactly-once) feeding raw.events. Connector config in Git; the client
+# certificate (CN=svc_kafka_connect, 7-day TTL) is injected by the Vault Agent injector, never stored here.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kafka-connect-clickhouse
+  namespace: argocd
+spec:
+  project: data-platform
+  source:
+    repoURL: https://github.com/example-org/clickhouse-platform.git
+    targetRevision: main
+    path: argocd/manifests/kafka-connect
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kafka-connect
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,35 @@
+---
+# Bring a replacement data node to service (runbooks/replace-node.md). Terraform has already replaced
+# the instance with the same hostname. Usage:
+#   ansible-playbook -i inventories/prod playbooks/replace_node.yml -e node=ch-s05-r2
+
+- name: Converge the new node
+  hosts: "{{ node | mandatory }}"
+  become: true
+  vars:
+    ch_allow_restart: true
+  roles:
+    - os_hardening
+    - vault_agent
+    - clickhouse_server
+    - otel_collector
+
+- name: Re-create tables and let replication fetch parts from the peer
+  hosts: "{{ node }}"
+  become: true
+  tasks:
+    - name: Drop stale replica metadata from Keeper (runs on a healthy peer of the same shard)
+      ansible.builtin.command: >-
+        clickhouse-client --query "SYSTEM DROP REPLICA '{{ replica }}'"
+      delegate_to: "{{ peer }}"
+      vars:
+        peer: "{{ groups['clickhouse'] | map('extract', hostvars) | selectattr('shard', 'equalto', shard) | map(attribute='inventory_hostname') | reject('equalto', inventory_hostname) | first }}"
+      register: drop
+      failed_when: drop.rc != 0 and 'There is a local table' not in drop.stderr
+      changed_when: drop.rc == 0
+
+    - name: Restore schema on this replica from the shard peer (ON CLUSTER DDL replays from the queue)
+      ansible.builtin.debug:
+        msg: >-
+          Run `ENV={{ ch_env }} scripts/migrate.sh` from the pipeline (re-run is idempotent), then watch
+          system.replication_queue until empty (~5-6 h for 19 TB). Return to chproxy when absolute_delay < 60.

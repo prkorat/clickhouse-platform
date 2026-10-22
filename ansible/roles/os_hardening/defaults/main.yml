@@ -1,0 +1,7 @@
+---
+# Override per environment in inventories/<env>/group_vars/all.yml.
+fw_data_cidrs: ["10.40.0.0/22", "10.40.4.0/22", "10.40.8.0/22"]
+fw_proxy_cidrs: ["10.40.32.0/26", "10.40.32.64/26", "10.40.32.128/26"]
+fw_connect_cidrs: ["10.40.48.0/22"]
+fw_prometheus_ips: ["10.40.40.10", "10.40.40.11"]
+fw_keeper_ips: ["10.40.16.10", "10.40.16.74", "10.40.16.138"]

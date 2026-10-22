@@ -1,0 +1,7 @@
+---
+# Keeper restarts are one node at a time, followers first (playbooks/rolling_upgrade.yml).
+- name: Restart Keeper (only when allowed)
+  ansible.builtin.systemd:
+    name: clickhouse-keeper
+    state: restarted
+  when: ch_allow_restart | bool

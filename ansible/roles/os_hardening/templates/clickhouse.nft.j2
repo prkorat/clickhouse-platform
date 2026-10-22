@@ -1,0 +1,23 @@
+# Managed by Ansible. Host firewall, defence in depth behind security groups (design doc Section 4.1).
+table inet clickhouse {
+  set data_nodes  { type ipv4_addr; flags interval; elements = { {{ fw_data_cidrs | join(', ') }} } }
+  set proxy_nodes { type ipv4_addr; flags interval; elements = { {{ fw_proxy_cidrs | join(', ') }} } }
+  set connect     { type ipv4_addr; flags interval; elements = { {{ fw_connect_cidrs | join(', ') }} } }
+  set prometheus  { type ipv4_addr; elements = { {{ fw_prometheus_ips | join(', ') }} } }
+  chain input {
+    type filter hook input priority 0; policy drop;
+    ct state established,related accept
+    iif lo accept
+{% if 'clickhouse' in group_names %}
+    tcp dport { 8443, 9440 } ip saddr @proxy_nodes accept
+    tcp dport { 8443, 9440 } ip saddr @connect accept
+    tcp dport { 9440, 9010 } ip saddr @data_nodes accept
+{% endif %}
+{% if 'keeper' in group_names %}
+    tcp dport 9281 ip saddr @data_nodes accept
+    tcp dport 9234 ip saddr { {{ fw_keeper_ips | join(', ') }} } accept
+{% endif %}
+    tcp dport 9363 ip saddr @prometheus accept
+    counter log prefix "ch-drop " drop
+  }
+}

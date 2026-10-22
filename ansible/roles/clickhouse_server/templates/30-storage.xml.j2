@@ -1,0 +1,77 @@
+<!-- Managed by Ansible (roles/clickhouse_server). Tiered, encrypted storage. Design doc Sections 3.3, 4.6, 5.5. -->
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <!-- Raw media -->
+      <nvme_raw><type>local</type><path>/data/nvme/clickhouse/</path></nvme_raw>
+      <warm_raw><type>local</type><path>/data/warm/clickhouse/</path></warm_raw>
+      <s3_raw>
+        <type>s3</type>
+        <!-- per-replica prefix: each replica owns its objects -->
+        <endpoint>https://{{ ch_cold_bucket }}.s3.{{ aws_region }}.amazonaws.com/data/{{ replica }}/</endpoint>
+        <region>{{ aws_region }}</region>
+        <use_environment_credentials>true</use_environment_credentials>  <!-- EC2 instance role, no keys -->
+        <server_side_encryption_kms_key_id>{{ ch_s3_cold_kms_key_arn }}</server_side_encryption_kms_key_id>
+        <server_side_encryption_kms_bucket_key_enabled>true</server_side_encryption_kms_bucket_key_enabled>
+        <metadata_path>/data/nvme/clickhouse/disks/s3_raw/</metadata_path>
+      </s3_raw>
+
+      <!-- Application-layer AES-256 encryption over each medium. Keys rendered by Vault Agent / Secrets Manager. -->
+      <hot>
+        <type>encrypted</type>
+        <disk>nvme_raw</disk>
+        <path>enc/</path>
+        <algorithm>AES_256_CTR</algorithm>
+{% for k in ch_disk_key_ids %}
+        <key_hex id="{{ k }}" from_env="CH_DISK_KEY_{{ k }}"/>
+{% endfor %}
+        <current_key_id>{{ ch_disk_key_ids | max }}</current_key_id>
+      </hot>
+      <warm>
+        <type>encrypted</type>
+        <disk>warm_raw</disk>
+        <path>enc/</path>
+        <algorithm>AES_256_CTR</algorithm>
+{% for k in ch_disk_key_ids %}
+        <key_hex id="{{ k }}" from_env="CH_DISK_KEY_{{ k }}"/>
+{% endfor %}
+        <current_key_id>{{ ch_disk_key_ids | max }}</current_key_id>
+      </warm>
+
+      <!-- Cold: S3 with a local NVMe cache (SSE-KMS at rest) -->
+      <cold>
+        <type>cache</type>
+        <disk>s3_raw</disk>
+        <path>/data/nvme/clickhouse/s3_cache/</path>
+        <max_size>{{ ch_s3_cache_size }}</max_size>
+      </cold>
+      <!-- Cold for PCI/HIPAA tables: client-side encrypted on top of SSE-KMS -->
+      <cold_regulated>
+        <type>encrypted</type>
+        <disk>s3_raw</disk>
+        <path>regulated/</path>
+        <algorithm>AES_256_CTR</algorithm>
+        <key_hex id="1" from_env="CH_REGULATED_KEY_1"/>
+        <current_key_id>1</current_key_id>
+      </cold_regulated>
+    </disks>
+
+    <policies>
+      <tiered>
+        <volumes>
+          <hot><disk>hot</disk></hot>
+          <warm><disk>warm</disk></warm>
+          <cold><disk>cold</disk><prefer_not_to_merge>true</prefer_not_to_merge></cold>
+        </volumes>
+        <move_factor>0.1</move_factor>   <!-- spill to next volume when a volume is 90% full -->
+      </tiered>
+      <tiered_regulated>
+        <volumes>
+          <hot><disk>hot</disk></hot>
+          <warm><disk>warm</disk></warm>
+          <cold><disk>cold_regulated</disk><prefer_not_to_merge>true</prefer_not_to_merge></cold>
+        </volumes>
+      </tiered_regulated>
+    </policies>
+  </storage_configuration>
+</clickhouse>

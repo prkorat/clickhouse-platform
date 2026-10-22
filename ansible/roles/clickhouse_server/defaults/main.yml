@@ -1,0 +1,6 @@
+---
+repo_root: "{{ playbook_dir }}/../.."
+ch_disk_key_ids: [1, 2]          # add a new id to rotate (playbooks/rotate_disk_key.yml); never remove an old id
+ch_s3_cache_size: 2Ti
+ch_numa_interleave: false        # true only on multi-socket hosts
+ch_allow_restart: false          # set by rolling_upgrade.yml / replace_node.yml only

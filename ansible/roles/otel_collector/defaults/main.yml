@@ -1,0 +1,3 @@
+---
+otel_version: "0.115.1"
+otel_gateway_endpoint: "otel-gateway.observability.internal:4317"

@@ -1,0 +1,13 @@
+<!-- Neutralize the built-in 'default' user. The hash is replaced by Ansible with a random value nobody knows. -->
+<clickhouse>
+  <users>
+    <default>
+      <password remove="1"/>
+      <no_password remove="1"/>
+      <password_sha256_hex>__random_64_hex_never_shared__</password_sha256_hex>
+      <networks><ip>127.0.0.1</ip></networks>
+      <access_management>0</access_management>
+      <profile>readonly</profile>
+    </default>
+  </users>
+</clickhouse>

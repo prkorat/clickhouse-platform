@@ -1,0 +1,26 @@
+<!--
+  LOCAL ONLY. Bootstrap admin for the Docker cluster (plays the role of svc_ci_deployer in prod)
+  and a disabled 'default' user, as in production. Role-based dev users are created by
+  clickhouse/access/env/local/100_dev_users.sql.
+-->
+<clickhouse>
+  <users>
+    <default>
+      <password remove="1"/>
+      <no_password remove="1"/>
+      <password_sha256_hex>4f2b1c87a1a3d6e0c5b2e71f7a0f2c6b9d4e8a1c3f5b7d9e1a2c4e6f8a0b2c4d</password_sha256_hex>
+      <networks replace="replace"><ip>127.0.0.1</ip></networks>
+      <access_management>0</access_management>
+    </default>
+    <admin>
+      <password>admin</password>
+      <networks><ip>::/0</ip></networks>
+      <profile>default</profile>
+      <quota>default</quota>
+      <access_management>1</access_management>
+      <named_collection_control>1</named_collection_control>
+      <show_named_collections>1</show_named_collections>
+      <show_named_collections_secrets>1</show_named_collections_secrets>
+    </admin>
+  </users>
+</clickhouse>

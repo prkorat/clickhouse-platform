@@ -1,0 +1,17 @@
+<!-- Managed by Ansible. Local clickhouse-client authenticates as svc_node_ops (mTLS, HOST LOCAL). -->
+<config>
+  <host>{{ inventory_hostname }}.{{ ch_dns_zone }}</host>
+  <port>9440</port>
+  <secure>true</secure>
+  <user>svc_node_ops</user>
+  <openSSL>
+    <client>
+      <certificateFile>/etc/clickhouse-client/tls/svc_node_ops.crt</certificateFile>
+      <privateKeyFile>/etc/clickhouse-client/tls/svc_node_ops.key</privateKeyFile>
+      <caConfig>/etc/clickhouse-server/tls/ca-bundle.crt</caConfig>
+      <loadDefaultCAFile>false</loadDefaultCAFile>
+      <verificationMode>strict</verificationMode>
+      <invalidCertificateHandler><name>RejectCertificateHandler</name></invalidCertificateHandler>
+    </client>
+  </openSSL>
+</config>

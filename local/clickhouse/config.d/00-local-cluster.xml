@@ -1,0 +1,42 @@
+<!--
+  LOCAL ONLY. Cluster topology for the Docker dev cluster: 2 shards x 2 replicas, plaintext ports
+  inside the Docker network. Production equivalent: ansible/roles/clickhouse_server/templates/90-node.xml.j2
+  (TLS 9440, mTLS, Keeper on 9281).
+-->
+<clickhouse>
+  <remote_servers replace="replace">
+    <local>
+      <secret from_env="CH_CLUSTER_SECRET"/>
+      <shard>
+        <internal_replication>true</internal_replication>
+        <replica><host>ch-s1-r1</host><port>9000</port></replica>
+        <replica><host>ch-s1-r2</host><port>9000</port></replica>
+      </shard>
+      <shard>
+        <internal_replication>true</internal_replication>
+        <replica><host>ch-s2-r1</host><port>9000</port></replica>
+        <replica><host>ch-s2-r2</host><port>9000</port></replica>
+      </shard>
+    </local>
+  </remote_servers>
+
+  <zookeeper>
+    <node><host>keeper-1</host><port>9181</port></node>
+    <node><host>keeper-2</host><port>9181</port></node>
+    <node><host>keeper-3</host><port>9181</port></node>
+    <session_timeout_ms>30000</session_timeout_ms>
+    <operation_timeout_ms>10000</operation_timeout_ms>
+  </zookeeper>
+
+  <distributed_ddl>
+    <path>/clickhouse/task_queue/ddl</path>
+  </distributed_ddl>
+
+  <prometheus>
+    <endpoint>/metrics</endpoint>
+    <port>9363</port>
+    <metrics>true</metrics>
+    <events>true</events>
+    <asynchronous_metrics>true</asynchronous_metrics>
+  </prometheus>
+</clickhouse>

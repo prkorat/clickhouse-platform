@@ -1,0 +1,107 @@
+---
+# ClickHouse data node (design doc Sections 3, 5). Static XML comes from clickhouse/config.d (policy-checked
+# in CI); per-node XML is templated here. ClickHouse's config reloader applies most config.d/users.d changes
+# within seconds without a restart; restarts happen only through playbooks/rolling_upgrade.yml.
+
+- name: Storage volumes (RAID 0 hot on instance store, RAID 0 warm on gp3)
+  ansible.builtin.import_tasks: storage.yml
+
+- name: ClickHouse package repository
+  ansible.builtin.yum_repository:
+    name: clickhouse-stable
+    description: ClickHouse stable
+    baseurl: https://packages.clickhouse.com/rpm/stable/
+    gpgkey: https://packages.clickhouse.com/rpm/stable/repodata/repomd.xml.key
+    gpgcheck: true
+    repo_gpgcheck: true
+
+- name: Install pinned ClickHouse version
+  ansible.builtin.dnf:
+    name:
+      - "clickhouse-server-{{ ch_version }}"
+      - "clickhouse-client-{{ ch_version }}"
+      - "clickhouse-common-static-{{ ch_version }}"
+    state: present
+  notify: Restart ClickHouse (only when allowed)
+
+- name: Version lock so OS patching never upgrades ClickHouse
+  ansible.builtin.command: dnf versionlock add clickhouse-server clickhouse-client clickhouse-common-static
+  changed_when: false
+
+- name: Data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: clickhouse
+    group: clickhouse
+    mode: "0750"
+  loop:
+    - /data/nvme/clickhouse
+    - /data/warm/clickhouse
+    - /etc/clickhouse-server/tls
+    - /etc/clickhouse-client/tls
+
+- name: Static config (identical on every node)
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/clickhouse/config.d/"
+    dest: /etc/clickhouse-server/config.d/
+    owner: root
+    group: clickhouse
+    mode: "0640"
+
+- name: Static users.d
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/clickhouse/users.d/log-settings.xml"
+    dest: /etc/clickhouse-server/users.d/log-settings.xml
+    owner: root
+    group: clickhouse
+    mode: "0640"
+
+- name: Disable the built-in default user with an unknowable password
+  ansible.builtin.template:
+    src: default-user.xml.j2
+    dest: /etc/clickhouse-server/users.d/default-user.xml
+    owner: root
+    group: clickhouse
+    mode: "0640"
+    force: false   # random hash generated once per host, then left alone (no drift on every run)
+
+- name: Per-node config (macros, cluster topology, Keeper)
+  ansible.builtin.template:
+    src: 90-node.xml.j2
+    dest: /etc/clickhouse-server/config.d/90-node.xml
+    owner: root
+    group: clickhouse
+    mode: "0640"
+
+- name: Storage policy (per-replica S3 prefix)
+  ansible.builtin.template:
+    src: 30-storage.xml.j2
+    dest: /etc/clickhouse-server/config.d/30-storage.xml
+    owner: root
+    group: clickhouse
+    mode: "0640"
+  notify: Restart ClickHouse (only when allowed)
+
+- name: Local client config (svc_node_ops over mTLS; used by playbooks)
+  ansible.builtin.template:
+    src: clickhouse-client.xml.j2
+    dest: /etc/clickhouse-client/config.xml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Systemd hardening and limits
+  ansible.builtin.template:
+    src: override.conf.j2
+    dest: /etc/systemd/system/clickhouse-server.service.d/override.conf
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart ClickHouse (only when allowed)
+
+- name: Service enabled (started on first install; later restarts are rolling)
+  ansible.builtin.systemd:
+    name: clickhouse-server
+    enabled: true
+    state: started
