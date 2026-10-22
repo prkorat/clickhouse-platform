@@ -23,7 +23,7 @@ jobs:
           - { env: dr, tf_env: dr-usw2, ch_host: chproxy.ch.dr.internal, role: "arn:aws:iam::111122223333:role/gha-clickhouse-plan" }
           - { env: staging, tf_env: staging, ch_host: chproxy.ch.staging.internal, role: "arn:aws:iam::444455556666:role/gha-clickhouse-plan" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: aws-actions/configure-aws-credentials@v4
         with: { role-to-assume: "${{ matrix.role }}", aws-region: us-east-1 }
       - uses: hashicorp/setup-terraform@v3
